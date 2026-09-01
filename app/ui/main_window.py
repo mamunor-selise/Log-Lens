@@ -79,23 +79,41 @@ class MainWindow(QMainWindow if HAS_PYSIDE6 else object):  # type: ignore
         sidebar_layout = QVBoxLayout(sidebar_widget)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
 
-        sidebar_title = QLabel("📁 Directory Explorer")
+        sidebar_title = QLabel("📁 Directory & Log Explorer")
         sidebar_title.setStyleSheet("font-weight: bold; font-size: 13px;")
 
+        # Quick Root Selector Dropdown
+        root_picker_layout = QHBoxLayout()
+        root_label = QLabel("Quick Root:")
+        self.root_combo = QComboBox()
+        self.root_combo.addItems([
+            "Select Root Share / Location...",
+            "\\10.11.64.7\\AKS-Stg-Logs (Staging Logs)",
+            "\\10.11.64.7\\AKS-Dev-Logs (Dev Logs)",
+            "Current Workspace Directory",
+            "C:\\",
+            "D:\\",
+        ])
+        self.root_combo.currentIndexChanged.connect(self._on_root_combo_changed)
+        root_picker_layout.addWidget(root_label)
+        root_picker_layout.addWidget(self.root_combo)
+
+        # Path Bar Layout
         path_bar_layout = QHBoxLayout()
         self.path_bar = QLineEdit()
-        self.path_bar.setPlaceholderText("Enter folder or UNC path (e.g. \\\\10.11.64.7\\AKS-Stg-Logs)...")
+        self.path_bar.setPlaceholderText("Folder path...")
         self.path_bar.returnPressed.connect(self._on_path_bar_navigate)
         self.go_btn = QPushButton("Go")
         self.go_btn.clicked.connect(self._on_path_bar_navigate)
         path_bar_layout.addWidget(self.path_bar)
         path_bar_layout.addWidget(self.go_btn)
 
-        self.browse_folder_btn = QPushButton("Browse Local/Network Folder...")
+        self.browse_folder_btn = QPushButton("📁 Browse / Select Folder...")
+        self.browse_folder_btn.setStyleSheet("font-weight: bold; padding: 6px;")
         self.browse_folder_btn.clicked.connect(self._on_browse_folder)
 
-        self.scan_folder_btn = QPushButton("🔍 Scan All Folder Logs")
-        self.scan_folder_btn.setStyleSheet("background-color: #0066cc; color: white; font-weight: bold;")
+        self.scan_folder_btn = QPushButton("🔍 Scan Active Folder Logs")
+        self.scan_folder_btn.setStyleSheet("background-color: #0066cc; color: white; font-weight: bold; padding: 6px;")
         self.scan_folder_btn.clicked.connect(self._scan_active_folder)
 
         # QFileSystemModel Tree View
@@ -113,6 +131,7 @@ class MainWindow(QMainWindow if HAS_PYSIDE6 else object):  # type: ignore
         self.tree_view.doubleClicked.connect(self._on_tree_item_double_clicked)
 
         sidebar_layout.addWidget(sidebar_title)
+        sidebar_layout.addLayout(root_picker_layout)
         sidebar_layout.addLayout(path_bar_layout)
         sidebar_layout.addWidget(self.browse_folder_btn)
         sidebar_layout.addWidget(self.scan_folder_btn)
@@ -168,6 +187,23 @@ class MainWindow(QMainWindow if HAS_PYSIDE6 else object):  # type: ignore
         self.setStatusBar(self.status_bar)
         self._update_status_message()
 
+    def _on_root_combo_changed(self, index: int) -> None:
+        if not HAS_PYSIDE6 or index == 0:
+            return
+        mapping = {
+            1: self.log_service.get_remote_unc_path("AKS-Stg-Logs"),
+            2: self.log_service.get_remote_unc_path("AKS-Dev-Logs"),
+            3: str(Path.cwd()),
+            4: "C:\\",
+            5: "D:\\",
+        }
+        target = mapping.get(index)
+        if target:
+            self.path_bar.setText(target)
+            self._on_path_bar_navigate()
+            if Path(target).exists() and Path(target).is_dir():
+                self._scan_directory(target)
+
     def _on_env_changed(self, index: int) -> None:
         env_map = [Environment.DEVELOPMENT, Environment.STAGING, Environment.PRODUCTION]
         selected_env = env_map[index]
@@ -216,18 +252,19 @@ class MainWindow(QMainWindow if HAS_PYSIDE6 else object):  # type: ignore
             self._scan_directory(folder)
 
     def _on_tree_item_clicked(self, index: QModelIndex) -> None:
-        file_path = self.fs_model.filePath(index)
-        self.path_bar.setText(file_path)
-
-    def _on_tree_item_double_clicked(self, index: QModelIndex) -> None:
-        file_path = Path(self.fs_model.filePath(index))
-        if file_path.is_dir():
-            self._scan_directory(str(file_path))
-        elif file_path.is_file():
-            count = self.log_service.open_file(file_path)
+        file_path_str = self.fs_model.filePath(index)
+        self.path_bar.setText(file_path_str)
+        target = Path(file_path_str)
+        if target.is_dir():
+            self._scan_directory(str(target))
+        elif target.is_file():
+            count = self.log_service.open_file(target)
             filtered = self.log_service.apply_filter()
             self.table_model.set_entries(filtered)
             self._update_status_message()
+
+    def _on_tree_item_double_clicked(self, index: QModelIndex) -> None:
+        self._on_tree_item_clicked(index)
 
     def _scan_active_folder(self) -> None:
         active_path = self.path_bar.text().strip()
