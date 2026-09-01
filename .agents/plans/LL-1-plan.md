@@ -54,6 +54,7 @@ Infrastructure (Configuration, Preferences, Filesystem)
 - [x] **Item 7:** Implement PySide6 `QAbstractTableModel` with virtualized lazy fetching (`canFetchMore`/`fetchMore`) in `app/ui/models/log_table_model.py`.
 - [x] **Item 8:** Build PySide6 `MainWindow` shell layout with search bar, filter panel, table view, and detail panel in `app/ui/main_window.py`.
 - [x] **Item 9:** Add unit and integration tests covering parsers, readers, search, filtering, and large file safety.
+- [x] **Item 10:** Analyze `PROJECT-REQUIREMENT.md` against guardrails & skills and document feature gaps & security risks in `.agents/project-progress/review.md`.
 
 ---
 
