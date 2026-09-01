@@ -4,14 +4,33 @@
 
 Build a Windows-first desktop application in Python that allows developers, QA engineers, support engineers, and operations teams to open, inspect, search, filter, and analyze application log files efficiently.
 
-The application is intended for log files similar to the example shown in the provided screenshot, where many rotated files exist with names such as:
+The application is specifically designed for AKS (Azure Kubernetes Service) and Windows application log directory structures hosted across network UNC shares such as:
 
-- `PCXWebHost.log.1659`
-- `PCXWebHost.log.1658`
-- `PCXWebHost.log.1657`
-- `PCXWebHost.log.1656`
+- `\\10.11.64.7\AKS-Stg-Logs`
+- `\\<ip.address>\AKS-Dev-Logs`
+- `\\<ip.address>\<share_name>`
 
-The primary goal is to make troubleshooting faster by providing a user-friendly interface for finding relevant log entries without manually opening large files or using text editors.
+#### Dynamic Directory Traversal & Variable Folder Hierarchy
+
+Logs are stored across heterogeneous network shares and local folder structures. Folder depth and naming conventions vary across applications, namespaces, and environments.
+
+For example:
+- `\\10.11.64.7\AKS-Stg-Logs\business-pcx\stg-business-pcx-win\PCXWebHost\`
+- `\\<ip.address>\AKS-Dev-Logs\<any_subfolder_depth>\...`
+
+**Traversal Requirement:**
+The application must perform **dynamic recursive directory traversal** starting from the selected root folder or network share down through all subfolder branches until it reaches leaf log files (`.log`, `.txt`, `.log.<number>`, etc.).
+
+Inside the leaf service folders (e.g., `PCXWebHost`), log rotation generates dozens to hundreds of rotated log files:
+
+- `PCXWebHost.log.1659` (Latest, e.g., 8/31/2026 6:26 PM, ~10,272 KB)
+- `PCXWebHost.log.1658` (8/30/2026 5:51 PM, ~10,241 KB)
+- `PCXWebHost.log.1657` (8/29/2026 7:27 PM, ~10,241 KB)
+- `PCXWebHost.log.1656` ... `PCXWebHost.log.1648`
+
+The primary goal is to make troubleshooting faster by providing a user-friendly interface for finding relevant log entries across these distributed network UNC paths without manually navigating deep folder trees or opening large individual files.
+
+---
 
 ### Recommended UI Technology
 
@@ -57,19 +76,28 @@ The application should be designed so that the core log-processing engine is ind
 
 # 3. Core Functional Requirements
 
-## 3.1 File and Folder Opening
+### 3.1 File, Folder, and Network Share Opening
 
 The application must allow users to:
 
 - Open a single log file.
 - Open multiple log files at once.
-- Open an entire folder.
-- Drag and drop log files into the application.
-- Add files to an existing session.
-- Remove files from the current session.
-- Refresh a file when its content changes.
-- Reopen recently used files.
-- Remember the last opened location.
+- Open an entire local folder or network directory tree.
+- **Open and Navigate Network UNC Shares directly** (e.g., `\\10.11.64.7\AKS-Stg-Logs`, `\\<ip.address>\AKS-Dev-Logs`, `\\<ip.address>\<share_name>`).
+- **Dynamic Recursive Folder Scanning:** Automatically traverse down arbitrary nested subfolder structures from the specified root share/folder until reaching target log files (`.log`, `.txt`, `.log.<seq>`). Directory structures are not assumed to have fixed depths or uniform naming.
+- Seamlessly paste or enter UNC network paths in the path navigation bar.
+- Drag and drop log files or network folders into the application.
+- Add files/directories to an existing session.
+- Remove files/directories from the current session.
+- Refresh a file/folder when its content changes.
+- Reopen recently used network UNC paths and local files.
+- Remember the last opened UNC or local directory location.
+
+### Network Path Resilience & Latency Safeguards
+
+- UNC file scanning and reading operations must run asynchronously off the UI thread to prevent UI freezing due to network SMB latency.
+- Provide progressive loading indicators during long recursive folder scans.
+- Provide graceful retry and clear warning notifications if a network share connection drops or requires authentication credentials.
 
 ### Supported File Types
 
@@ -77,7 +105,7 @@ Initially support:
 
 - `.log`
 - `.txt`
-- Rotated files such as `.log.1659`
+- Rotated numeric extension files such as `.log.1659`, `.log.1658`, etc.
 - Files with unknown extensions when explicitly selected by the user
 
 The file type handling should be configuration-driven rather than hard-coded.
@@ -96,10 +124,20 @@ The application must:
 - Keep the UI responsive during file loading.
 - Support cancellation of long-running load/search operations.
 - Show progress for expensive operations.
-- Prevent accidental memory exhaustion.
+- Prevent accidental memory exhaustion (maintain a strict memory ceiling, e.g., max 500 MB RAM per session).
 - Handle files that are several hundred MB or larger when the machine has sufficient resources.
 
-### Recommended Architecture
+### Architecture Strategy: Two-Tier Memory Storage
+
+To support multi-gigabyte logs without memory exhaustion:
+
+1. **Tier 1 (Lightweight Offset Index Tier):**
+   - Store only lightweight entry descriptors in memory: `(entry_id, file_id, byte_offset, length, timestamp_epoch, level_enum)`.
+   - Overhead must remain < 32 bytes per log entry.
+2. **Tier 2 (Lazy-Loaded Entry Detail Tier):**
+   - Fetch `raw_text`, full parsed message, and metadata on-demand from disk when an entry scrolls into the viewport or is selected in the Detail Panel.
+
+### Recommended Background Worker Architecture
 
 Use a background worker architecture:
 
@@ -293,6 +331,13 @@ System.NullReferenceException: Object reference not set...
 
 The complete stack trace should be treated as one logical log entry when the configured parser can determine the entry boundary.
 
+### Fallback Boundary Detection Heuristics
+
+When no matching parser profile exists or the log format is unknown, the reader must apply standard heuristic rules:
+1. **New Entry Header:** A line starting with a recognized timestamp format or uppercase log level (`[INFO]`, `ERROR:`, etc.) marks the start of a new entry.
+2. **Continuation Line:** A line starting with whitespace/tab, stack trace indicators (`at `, `Caused by:`, `... N more`), or nested JSON braces (`{`, `}`) is appended to the current active entry.
+3. **Safe Default:** If no entry boundary pattern matches, fall back to treating each non-indented line as an individual log entry without failing or dropping data.
+
 ---
 
 # 3.10 Detail Panel
@@ -344,7 +389,10 @@ When enabled:
 - Allow the user to pause auto-scrolling.
 - Clearly indicate when new content is available.
 
-The application must handle files being rotated.
+### Windows Lock Safety & Rotation Tailing
+
+- **Non-Blocking File Handles:** Open live tailing files using Windows shared read access (`FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE`) so active backend processes (IIS, .NET, Java) are not blocked.
+- **Rotation Auto-Reopen:** Detect `FileRenamed` or `FileTruncated` events. When the active `.log` file is rotated to `.log.1`, automatically transition tailing to the newly created base `.log` file without losing position.
 
 ---
 
@@ -372,25 +420,26 @@ Features:
 
 ---
 
-# 3.14 Log File Grouping
+# 3.14 Log File Grouping & Dynamic Folder Tree Discovery
 
-The application should optionally identify rotated logs belonging to the same base file.
+The application must support non-uniform directory structures and automatically discover all log targets recursively starting from any root directory down to leaf `.log` or `.txt` files.
 
-For example:
+### Dynamic Recursive Path Indexing
 
-```text
-PCXWebHost.log
-PCXWebHost.log.1656
-PCXWebHost.log.1657
-PCXWebHost.log.1658
-PCXWebHost.log.1659
-```
+- **Variable Folder Depth Handling:** The scanner must not assume a static folder depth or rigid schema. Subfolders are dynamically traversed until leaf log files (`.log`, `.txt`, `.log.<seq>`) are reached.
+- **Dynamic Path Faceting:** Each discovered file's relative path from the opened root share/directory (e.g. `business-pcx / stg-business-pcx-win / PCXWebHost`) is automatically decomposed into dynamic UI filter facets (Folder Levels 1..N, Service Name, Base Filename).
 
-Group them under:
+### Rotated File Grouping
 
-`PCXWebHost`
+Rotated log files sharing a common base prefix (e.g. `PCXWebHost.log.1648` through `PCXWebHost.log.1659`) inside any leaf directory are automatically grouped under their parent component name (`PCXWebHost`).
 
-The user should be able to select the entire group and search across it.
+The user can select an entire discovered folder branch, service group, or individual log file to filter and search across.
+
+### Unified Stream Sorting Strategy
+
+When viewing or searching across a rotated file group or multi-folder selection:
+1. **Primary Interleaving:** Sort entries chronologically across all files using parsed entry timestamps.
+2. **Secondary Fallback:** If timestamps are missing or unparseable, fall back to sorting by natural file sequence numbers (`.log.1656` before `.log.1657`) and internal byte offsets.
 
 ---
 
@@ -451,6 +500,13 @@ Future extension:
 
 Export should respect the active filters.
 
+### Streaming Export Safeguard
+
+To prevent UI freezes or out-of-memory errors when exporting massive filtered datasets (e.g. 500,000+ entries):
+- Export operations MUST execute in a background worker thread.
+- Data must be written directly to the target file in bounded byte chunks rather than accumulating strings in memory.
+- A progress bar with a **Cancel** option must be displayed in the UI during export.
+
 ---
 
 # 3.18 Bookmarks
@@ -481,7 +537,7 @@ Requirements:
 
 ---
 
-# 3.20 Application Preferences
+# 3.20 Application Preferences & Config Persistence
 
 Settings should include:
 
@@ -497,6 +553,13 @@ Settings should include:
 - Maximum recent files.
 - Follow/tail behavior.
 - Parser configuration.
+
+### Storage & Schema Specification
+
+- Preferences and custom parser profiles must be stored in standard OS user config directories:
+  - Windows: `%APPDATA%\Log-Lens\config.json` and `%APPDATA%\Log-Lens\profiles\*.json`
+  - Linux/macOS fallback: `~/.config/log-lens/`
+- Configuration structures must use strongly typed JSON schemas with automated fallback to default values on corrupted configuration files.
 
 ---
 
@@ -580,6 +643,7 @@ log-viewer/
 - Search logic should be reusable without the GUI.
 - Configuration must not be hard-coded into UI components.
 - Long-running operations must run outside the UI thread.
+- **Qt UI Virtualization:** Log table views MUST use custom `QAbstractTableModel` implementations with lazy fetching (`canFetchMore`/`fetchMore`) and item delegates. Instantiating individual `QWidget` objects per row is strictly forbidden.
 
 ---
 
