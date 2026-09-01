@@ -3,6 +3,8 @@ import tempfile
 from pathlib import Path
 from app.core.services.log_service import LogService
 from app.ui.models.log_table_model import LogTableModel
+from app.ui.main_window import MainWindow, HAS_PYSIDE6
+from app.infrastructure.configuration.remote_ip_config import Environment
 
 class TestLogTableModel(unittest.TestCase):
     def test_log_table_model_basic(self):
@@ -26,6 +28,13 @@ class TestLogTableModel(unittest.TestCase):
             self.assertEqual(model.columnCount(), 5)
             self.assertEqual(model.data(model.index(0, 2)), "INFO")
             self.assertEqual(model.data(model.index(1, 2)), "ERROR")
+
+    def test_main_window_environment_config_integration(self):
+        service = LogService()
+        window = MainWindow(log_service=service)
+        
+        self.assertEqual(window.log_service.remote_ip_config.get_environment(), Environment.DEVELOPMENT)
+        self.assertEqual(window.log_service.remote_ip_config.get_remote_ip(), "10.11.64.7")
 
 if __name__ == "__main__":
     unittest.main()
