@@ -4,15 +4,20 @@ from app.core.filters.engine import FilterEngine, LevelFilter
 from app.core.models.log_entry import LogEntry, LogIndexEntry, LogLevel
 from app.core.readers.file_reader import LargeFileReader
 from app.core.search.engine import SearchEngine, SearchQuery
+from app.infrastructure.configuration.remote_ip_config import RemoteIPConfig
 
 class LogService:
-    """Application Service coordinating readers, parsers, filters, and search engines."""
+    """Application Service coordinating readers, parsers, filters, search engines, and remote configs."""
 
-    def __init__(self):
+    def __init__(self, remote_ip_config: Optional[RemoteIPConfig] = None):
         self._readers: Dict[str, LargeFileReader] = {}
         self._index: List[LogIndexEntry] = []
         self._filter_engine = FilterEngine()
         self._search_engine = SearchEngine()
+        self.remote_ip_config = remote_ip_config or RemoteIPConfig()
+
+    def get_remote_unc_path(self, share_name: str) -> str:
+        return self.remote_ip_config.get_share_unc_path(share_name)
 
     def open_file(self, filepath: Union[str, Path]) -> int:
         path = Path(filepath)

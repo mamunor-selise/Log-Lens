@@ -3,7 +3,7 @@ description: Pick up a Jira ticket for a sprint — branch, fetch, explore, plan
 ---
 
 Procedure for `/ticket <jira-url> <sprint-number>`.
-Example: `/ticket https://mamunorselise.atlassian.net/browse/MCC-4 sprint-1`
+Example: `/ticket https://mamunorselise.atlassian.net/browse/LL-1 sprint-1`
 
 Constants and commands are defined in this repo's `AGENTS.md` — use them by name. `GUARDRAILS.md` overrides everything here.
 
