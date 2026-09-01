@@ -19,6 +19,10 @@ class LogService:
     def get_remote_unc_path(self, share_name: str) -> str:
         return self.remote_ip_config.get_share_unc_path(share_name)
 
+    def clear_session(self) -> None:
+        self._readers.clear()
+        self._index.clear()
+
     def open_file(self, filepath: Union[str, Path]) -> int:
         path = Path(filepath)
         reader = LargeFileReader(path)
@@ -27,6 +31,39 @@ class LogService:
         entries = list(reader.build_index())
         self._index.extend(entries)
         return len(entries)
+
+    def open_directory(self, dirpath: Union[str, Path], recursive: bool = True) -> int:
+        path = Path(dirpath)
+        if not path.exists() or not path.is_dir():
+            return 0
+
+        self.clear_session()
+        total_entries = 0
+
+        pattern_iter = path.rglob("*") if recursive else path.glob("*")
+        for item in pattern_iter:
+            if item.is_file() and self._is_log_file(item):
+                try:
+                    reader = LargeFileReader(item)
+                    self._readers[item.name] = reader
+                    entries = list(reader.build_index())
+                    self._index.extend(entries)
+                    total_entries += len(entries)
+                except Exception:
+                    continue
+
+        return total_entries
+
+    def _is_log_file(self, path: Path) -> bool:
+        name = path.name.lower()
+        if name.endswith(".log") or name.endswith(".txt"):
+            return True
+        # Check rotated pattern .log.1659
+        if ".log." in name:
+            parts = name.split(".log.")
+            if len(parts) > 1 and parts[-1].isdigit():
+                return True
+        return False
 
     def get_total_entry_count(self) -> int:
         return len(self._index)
