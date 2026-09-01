@@ -2,7 +2,7 @@
 
 **Ticket:** [LL-1](https://mamunorselise.atlassian.net/browse/LL-1) - Read all requirement file from all .md file and implement it using python  
 **Sprint:** sprint-1  
-**Status:** pr-open  
+**Status:** verified  
 **Branch:** feature/LL-1-read-all-requirement  
 **Counterpart:** N/A (Log-Lens single repo)  
 
